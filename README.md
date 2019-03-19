@@ -58,4 +58,6 @@ around to be developed.  A good first step is to get good at crashing.
     automatic contol system would maintain a desired lean angle.  It's basically an inverted
     pendulum problem.  The driver can directly control the lean angle setpoint with, for example
     a joystick or other layers of control can be applied on top of the lean angle controller.
-
+    A skateboard with automatic lean control would probably have a means of steering other 
+    than the traditional skateboard trucks, for example the skateboard may have an actuator
+    that causes an axle or axles to rotate so as to steer the board.
