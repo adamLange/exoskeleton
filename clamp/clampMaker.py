@@ -1,15 +1,18 @@
 import OCC
-from OCC.TopoDS import TopoDS_Compound
+from OCC.TopoDS import TopoDS_Compound, TopoDS_Shape
 from OCC.BRep import BRep_Builder
 from OCC.BRepTools import breptools_Write
 from OCC.Geom import Geom_Ellipse
 from math import pi
 from OCC.gp import *
-from OCC.BRepBuilderAPI import BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace
+from OCC.BRepBuilderAPI import BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Transform
 from OCC.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeSphere
 from OCC.BRepAlgoAPI import BRepAlgoAPI_Cut
 from math import cos, sin
 from OCC.TopTools import TopTools_ListOfShape
+from OCC.BRepTools import breptools_Read
+from OCC.BRepAdaptor import BRepAdaptor_CompCurve
+from OCCUtils import Topo
 
 def writeBRep(filename, shapeList):
     aRes = TopoDS_Compound()
@@ -98,11 +101,11 @@ def makePieSlice(r,theta0,theta1,z_min,z_max):
     return mp.Shape()
 
 def makeBall(r):
-    ax = gp_Ax2(gp_Pnt(0,0,0),gp_Dir(0,0,1),gp_Dir(1,0,0))
+    ax = gp_Ax2(gp_Pnt(0,0,0),gp_Dir(0,0,1),gp_Dir(0,1,0))
     ms = BRepPrimAPI_MakeSphere(ax,r)
     return ms.Shape()
 
-def makeStringer():
+def makeStringerWithContinuousSlot():
     thickness = 5.0
     width = 25.0
     slot_width = 5.0
@@ -120,19 +123,19 @@ def makeStringer():
     points.append(gp_Pnt(x,y,z)) # bottom right corner
 
     y = -slot_width /2.0
-    points.append(gp_Pnt(x,y,x)) 
+    points.append(gp_Pnt(x,y,z)) 
 
     x = x - slot_depth
-    points.append(gp_Pnt(x,y,x)) 
+    points.append(gp_Pnt(x,y,z)) 
 
     y = slot_width /2.0
-    points.append(gp_Pnt(x,y,x)) 
+    points.append(gp_Pnt(x,y,z)) 
 
     x = x + slot_depth
-    points.append(gp_Pnt(x,y,x)) 
+    points.append(gp_Pnt(x,y,z)) 
 
     y = width / 2.0  # top right corner
-    points.append(gp_Pnt(x,y,x)) 
+    points.append(gp_Pnt(x,y,z)) 
 
     x = -thickness / 2.0 # top left corner
     points.append(gp_Pnt(x,y,z))
@@ -164,7 +167,37 @@ def makeStringer():
     mf = BRepBuilderAPI_MakeFace(mw.Wire())
     mp = BRepPrimAPI_MakePrism(mf.Face(),gp_Vec(0,0,length))
     return mp.Shape()
-    
+
+class Clamp:
+
+    def __init__(self):
+        pass
+
+class BallRetainer:
+
+    def __init__(self):
+        pass
+
+class BallSet:
+
+    def __init__(self):
+        pass
+
+def loadBRep(filename):
+  builder = BRep_Builder()
+  shape = TopoDS_Shape()
+  breptools_Read(shape, filename, builder)
+  return shape
+
+
+profile = loadBRep("inputGeom/5_segment_wire.brep")
+
+for i in Topo(profile).wires():
+  wire = i
+
+adaptor = BRepAdaptor_CompCurve(wire)
+print(adaptor.FirstParameter())
+print(adaptor.LastParameter())
 
 body         = makeEllipticalAnnularSolid(70,55,40,25,0,30)
 cavityCutter = makeEllipticalAnnularSolid(65,50,45,30,5,31)
@@ -174,8 +207,33 @@ part = mc.Shape()
 pieSlice = makePieSlice(100,0,pi/4.0,-1,31)
 
 ball = makeBall(10)
+stringer = makeStringerWithContinuousSlot()
+trsf = gp_Trsf()
+trsf.SetTranslation(gp_Vec(0,0,-75))
+mt = BRepBuilderAPI_Transform(stringer,trsf)
 
-stringer = makeStringer()
 
-writeBRep("./out.brep",[part,pieSlice,ball])
-writeBRep("./stringer.brep",[stringer])
+mc = BRepAlgoAPI_Cut(ball,mt.Shape())
+keyedBalls = mc.Shape()
+
+balls = []
+for i in range (5):
+  #p = adaptor.Value(i+0.5)
+  p = gp_Pnt()
+  v = gp_Vec()
+  adaptor.D1(i+0.6,p,v)
+  print("magnitude:{}".format(v.Magnitude()))
+  trsf = gp_Trsf()
+  trsf.SetTranslation(gp_Vec(p.XYZ()))
+  mt = BRepBuilderAPI_Transform(keyedBalls,trsf)
+  balls.append(mt.Shape())
+
+output = [profile]
+output.extend(balls)
+
+
+#profile = loadBRep("inputGeom/circ.brep")
+
+#writeBRep("./out.brep",[part,pieSlice,ball,stringer])
+#writeBRep("./out.brep",[keyedBalls,stringer,profile])
+writeBRep("./out.brep",output)
