@@ -178,10 +178,84 @@ class BallRetainer:
     def __init__(self):
         pass
 
-class BallSet:
+class MakeSlotShapedSolid:
 
     def __init__(self):
-        pass
+      """
+      ax2 is in the middle of the slot on the back face
+      The first direction of the ax2 is the extrusion direction.
+      The second direction is the slot direction.
+      """
+      self.ax2 = gp_Ax2(gp_Pnt(0,0,0),gp_Dir(0,0,1),gp_Dir(1,0,0))
+      self.thickness = 5.0
+      self.width = 20.0
+      self.length = 150.0
+
+    def Solid(self):
+
+      mw = BRepBuilderAPI_MakeWire()
+      points = []
+
+      x = -self.length/2.0
+      y = -self.width/2.0
+      z = 0.0
+      points.append(gp_Pnt(x,y,z))
+
+      x = self.length/2.0
+      points.append(gp_Pnt(x,y,z))
+
+      me = BRepBuilderAPI_MakeEdge(points[0],points[1])
+      mw.Add(me.Edge()) # bottom edge
+
+      ax = gp_Ax2(gp_Pnt(x,0,0),gp_Dir(0,0,1),gp_Dir(0,-1,0))
+      circ = gp_Circ(ax,self.width/2.0)
+      me = BRepBuilderAPI_MakeEdge(circ,0,pi)
+      mw.Add(me.Edge())
+
+      points = []
+      y = self.width/2.0
+      points.append(gp_Pnt(x,y,z))
+
+      x = -self.length/2.0
+      points.append(gp_Pnt(x,y,z))
+      me = BRepBuilderAPI_MakeEdge(points[0],points[1])
+      mw.Add(me.Edge()) # top edge
+
+      ax = gp_Ax2(gp_Pnt(x,0,0),gp_Dir(0,0,1),gp_Dir(0,1,0))
+      circ = gp_Circ(ax,self.width/2.0)
+      me = BRepBuilderAPI_MakeEdge(circ,0,pi)
+      mw.Add(me.Edge())
+
+      mf = BRepBuilderAPI_MakeFace(mw.Wire())
+      mp = BRepPrimAPI_MakePrism(mf.Face(),gp_Vec(0,0,self.thickness))
+
+      shape = mp.Shape()
+
+      #v_trans = gp_Vec(self.ax2.Location().XYZ())
+      ax = gp_Ax2(gp_Pnt(0,0,0),gp_Dir(0,0,1),gp_Dir(1,0,0))
+      #mainRotationAngle = ax.Angle(self.ax2)
+
+      trsf = gp_Trsf()
+      trsf.SetTransformation(gp_Ax3(self.ax2),gp_Ax3(ax))
+
+      mt = BRepBuilderAPI_Transform(shape,trsf)
+      return mt.Shape()
+
+class StringerBallAssy:
+
+  def __init__(self):
+
+      self.l_min = 50.0
+      self.l_max = 150.0
+      self.thickness = 5.0
+      self.width = 25.0
+      self.r = 20.0
+      self.groove_depth = self.thickness / 4.0
+      self.groove_width = 5.0
+
+  def buildStringer(self):
+    x = 0
+    y = 0
 
 def loadBRep(filename):
   builder = BRep_Builder()
@@ -212,7 +286,6 @@ trsf = gp_Trsf()
 trsf.SetTranslation(gp_Vec(0,0,-75))
 mt = BRepBuilderAPI_Transform(stringer,trsf)
 
-
 mc = BRepAlgoAPI_Cut(ball,mt.Shape())
 keyedBalls = mc.Shape()
 
@@ -231,6 +304,10 @@ for i in range (5):
 output = [profile]
 output.extend(balls)
 
+ms = MakeSlotShapedSolid()
+ms.ax2 = gp_Ax2(gp_Pnt(0,0,150),gp_Dir(0,0,1),gp_Dir(0,1,0))
+slot = ms.Solid()
+output.append(slot)
 
 #profile = loadBRep("inputGeom/circ.brep")
 
