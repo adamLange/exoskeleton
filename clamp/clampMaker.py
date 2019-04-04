@@ -3,7 +3,7 @@ from OCC.TopoDS import TopoDS_Compound, TopoDS_Shape
 from OCC.BRep import BRep_Builder
 from OCC.BRepTools import breptools_Write
 from OCC.Geom import Geom_Ellipse
-from math import pi
+from math import pi, ceil, floor
 from OCC.gp import *
 from OCC.BRepBuilderAPI import BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Transform
 from OCC.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeSphere
@@ -241,6 +241,110 @@ class MakeSlotShapedSolid:
       mt = BRepBuilderAPI_Transform(shape,trsf)
       return mt.Shape()
 
+class BallCurve:
+
+  def __init__(self,wire):
+
+    self.wire = wire
+    self.balls = []
+    self.ballParams = []
+    self.adaptor = BRepAdaptor_CompCurve(self.wire)
+
+  def transform(trsf):
+    mt = BRepBuilerAPI_Transform()
+    self.wire
+
+  def insertBall(self,index,ball,paramOnCurve):
+
+    ball.ballCurve = self
+    self.balls.insert(index,ball)
+    self.ballParams.insert(index,paramOnCurve)
+    for i in range(len(self.balls)):
+      self.balls[i].index = i
+
+  def popBall(self,index):
+    ball = self.balls.pop(index)
+    param = self.ballParams.pop(index)
+    for i in range(len(balls)):
+      ball[i].index = i
+    return (ball,param)
+
+  def spaceBalls(self,firstBallIndex,lastBallIndex):
+    # spaces the balls between firstBallIndex and lastBallIndex evenly on the curve
+    # get the distance on the curve from the first ball to the last ball
+
+    if firstBallIndex == lastBallIndex:
+      raise Warning("firstBallIndex and lastBallIndex are the same!")
+
+    u0 = self.ballParams[firstBallIndex]
+    u1 = self.ballParams[lastBallIndex]
+
+    nSegmentsToQuery = ceil(u1) - floor(u0)
+    firstSegmentToQuery = floor(u0)
+    d = {}
+    print("segments to query: {}".format(nSegmentsToQuery))
+    for i in range(nSegmentsToQuery):
+      segment = firstSegmentToQuery + i
+      print(segment)
+      p = gp_Pnt()
+      v = gp_Vec()
+      self.adaptor.D1(segment+0.5,p,v)
+      d[segment] = v.Magnitude()
+    print(d)
+
+    l = 0.0
+    if floor(u0) != floor(u1): # u0 and u1 are in different edges
+      print("different edges")
+      l += (ceil(u0)-u0) * d[int(floor(u0))]
+      print("l = {}".format(l))
+      l += (u1 - floor(u1)) * d[int(floor(u1))]
+      print("l = {}".format(l))
+    else: # same edge
+      l += (u1 - u0) * d[int(floor(u0))]
+
+    if nSegmentsToQuery >= 3:
+      for i in range(nSegmentsToQuery-2):
+        l += d[firstSegmentToQuery+1+i]
+    print("l = {}".format(l))
+
+    nBallsToMove = lastBallIndex - firstBallIndex - 1
+    deltaL = l/(nBallsToMove+1)
+    print("deltaL {}".format(deltaL))
+
+    for i in range(nBallsToMove):
+      ballIndex = i + firstBallIndex + 1
+      print("ballIndex {}".format(ballIndex))
+      u_base = self.ballParams[ballIndex - 1]
+      converged = False
+      l_from_past_segments = 0.0
+      while not converged:
+        u = ( deltaL - l_from_past_segments ) / d[int(floor(u_base))] + u_base
+        if (u - floor(u_base)) > 1.0:
+          print("not converged. u_base={}  u={}".format(u_base,u))
+          l_from_past_segments += d[int(floor(u_base))] * (floor(u_base+1) - u_base)
+          u_base = floor(u_base + 1)
+        else:
+          print("converged. u_base={} u={}".format(u_base,u))
+          self.ballParams[ballIndex] = u
+          converged = True
+
+  def getPnt(self,i):
+    return self.adaptor.Value(self.ballParams[i])
+
+
+class Ball:
+
+  def __init__(self,r):
+    self.index = None
+    self.ballCurve = None
+    self.r = r
+
+  def Shape(self):
+    p = self.ballCurve.getPnt(self.index)
+    ax = gp_Ax2(p,gp_Dir(0,0,1),gp_Dir(0,1,0))
+    ms = BRepPrimAPI_MakeSphere(ax,self.r)
+    return ms.Shape()
+
 class StringerBallAssy:
 
   def __init__(self):
@@ -265,13 +369,10 @@ def loadBRep(filename):
 
 
 profile = loadBRep("inputGeom/5_segment_wire.brep")
+#profile = loadBRep("inputGeom/circ.brep")
 
 for i in Topo(profile).wires():
   wire = i
-
-adaptor = BRepAdaptor_CompCurve(wire)
-print(adaptor.FirstParameter())
-print(adaptor.LastParameter())
 
 body         = makeEllipticalAnnularSolid(70,55,40,25,0,30)
 cavityCutter = makeEllipticalAnnularSolid(65,50,45,30,5,31)
@@ -289,28 +390,28 @@ mt = BRepBuilderAPI_Transform(stringer,trsf)
 mc = BRepAlgoAPI_Cut(ball,mt.Shape())
 keyedBalls = mc.Shape()
 
-balls = []
-for i in range (5):
-  #p = adaptor.Value(i+0.5)
-  p = gp_Pnt()
-  v = gp_Vec()
-  adaptor.D1(i+0.6,p,v)
-  print("magnitude:{}".format(v.Magnitude()))
-  trsf = gp_Trsf()
-  trsf.SetTranslation(gp_Vec(p.XYZ()))
-  mt = BRepBuilderAPI_Transform(keyedBalls,trsf)
-  balls.append(mt.Shape())
-
 output = [profile]
-output.extend(balls)
 
 ms = MakeSlotShapedSolid()
 ms.ax2 = gp_Ax2(gp_Pnt(0,0,150),gp_Dir(0,0,1),gp_Dir(0,1,0))
 slot = ms.Solid()
 output.append(slot)
 
-#profile = loadBRep("inputGeom/circ.brep")
 
-#writeBRep("./out.brep",[part,pieSlice,ball,stringer])
-#writeBRep("./out.brep",[keyedBalls,stringer,profile])
+ballCurve = BallCurve(wire)
+for i in range(32):
+  ball = Ball(5)
+  ballCurve.insertBall(i+1,ball,0.5)
+
+ballCurve.ballParams[0] = 0.25 * 5.0 
+ballCurve.ballParams[15] = 0.5 * 5.0
+ballCurve.spaceBalls(0,15)
+
+ballCurve.ballParams[16] = 0.75 * 5.0
+ballCurve.ballParams[31] = 0.99 * 5.0
+ballCurve.spaceBalls(16,31)
+
+for ball in ballCurve.balls:
+  output.append(ball.Shape())
+
 writeBRep("./out.brep",output)
