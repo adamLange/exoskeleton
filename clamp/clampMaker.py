@@ -6,13 +6,15 @@ from OCC.Geom import Geom_Ellipse
 from math import pi, ceil, floor
 from OCC.gp import *
 from OCC.BRepBuilderAPI import BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Transform
-from OCC.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeSphere
+from OCC.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeSphere, BRepPrimAPI_MakeCylinder
 from OCC.BRepAlgoAPI import BRepAlgoAPI_Cut
+from OCC.BRepFilletAPI import BRepFilletAPI_MakeChamfer
 from math import cos, sin
 from OCC.TopTools import TopTools_ListOfShape
 from OCC.BRepTools import breptools_Read
-from OCC.BRepAdaptor import BRepAdaptor_CompCurve
+from OCC.BRepAdaptor import BRepAdaptor_CompCurve, BRepAdaptor_Surface
 from OCCUtils import Topo
+from OCC.GeomAbs import GeomAbs_Plane
 
 def writeBRep(filename, shapeList):
     aRes = TopoDS_Compound()
@@ -269,6 +271,10 @@ class BallCurve:
       ball[i].index = i
     return (ball,param)
 
+  def computeLength(self):
+    raise NotImplemented()
+    
+
   def spaceBalls(self,firstBallIndex,lastBallIndex):
     # spaces the balls between firstBallIndex and lastBallIndex evenly on the curve
     # get the distance on the curve from the first ball to the last ball
@@ -328,6 +334,12 @@ class BallCurve:
           self.ballParams[ballIndex] = u
           converged = True
 
+  def parameterFromNormalizedParameter(self,u_norm):
+    if (u_norm < 0 ) or (u_norm > 1.0):
+      raise Warning("u_norm must be in the range 0 <= u_norm <= 1")
+    l = self.computeTotalLength() * u_norm
+    return self.compute
+
   def getPnt(self,i):
     return self.adaptor.Value(self.ballParams[i])
 
@@ -345,21 +357,108 @@ class Ball:
     ms = BRepPrimAPI_MakeSphere(ax,self.r)
     return ms.Shape()
 
-class StringerBallAssy:
+  def getPnt(self):
+    return self.ballCurve.getPnt(self.index)
+
+  def D1(self):
+    p = gp_Pnt()
+    v = gp_Vec()
+    self.ballCurve.adaptor.D1(self.ballCurve.ballParams[self.index],p,v)
+    return (p,v)
+
+class ForceTransferCylinder:
+
+  def __init__(self,d_o,d_i,ball0,ball1):
+    self.balls = [ball0,ball1]
+    self.d_i = d_i
+    self.d_o = d_o
+    self.chamfer_distance = 4.0
+
+  def Shape(self):
+    ball_vecs = []
+    for i in self.balls:
+      ball_vecs.append(gp_Vec(i.getPnt().XYZ()))
+    v_ball_to_ball = ball_vecs[1] - ball_vecs[0]
+    ax = gp_Ax2(gp_Pnt(ball_vecs[0].XYZ()),gp_Dir(v_ball_to_ball.XYZ()))
+    mcyl = BRepPrimAPI_MakeCylinder(ax,self.d_o/2.0,v_ball_to_ball.Magnitude())
+    cyl = mcyl.Shape()
+    mch = BRepFilletAPI_MakeChamfer(cyl)
+
+    endFaces = []
+    for face in Topo(cyl).faces():
+      adaptor = BRepAdaptor_Surface(face)
+      if adaptor.GetType() == GeomAbs_Plane:
+        endFaces.append(face)
+        for edge in Topo(face).edges():
+          mch.Add(self.chamfer_distance,edge,face)
+    try:
+      chamferedCyl = mch.Shape()
+    except:
+      chamferedCyl = cyl
+      print("chamfer on ForceTransferCylinder failed!")
+    mc = BRepAlgoAPI_Cut(chamferedCyl,self.balls[0].Shape())
+    mc = BRepAlgoAPI_Cut(  mc.Shape(),self.balls[1].Shape())
+    return mc.Shape()
+
+class Stringer:
 
   def __init__(self):
 
-      self.l_min = 50.0
-      self.l_max = 150.0
-      self.thickness = 5.0
-      self.width = 25.0
-      self.r = 20.0
-      self.groove_depth = self.thickness / 4.0
-      self.groove_width = 5.0
+    self.ball_0 = None
+    self.ball_1 = None
+    self.l_min = 50.0
+    self.l_max = 150.0
+    self.thickness = 5.0
+    self.width = 25.0
+    self.r = 20.0
+    self.groove_depth = self.thickness / 4.0
+    self.groove_width = 5.0
+    self.shape = None
+
+  def getLengthFromBalls(self,forceUpdate=False):
+    l = (gp_Vec(self.ball_1.getPnt().XYZ()) - gp_Vec(self.ball_0.getPnt().XYZ())).Magnitude()
+    if forceUpdate:
+      self.l_min = l
+      self.l_max = l
+    else:
+      if l < l_min:
+        l_min = l
+      if l > l_max:
+        l_max = l
+    return
 
   def buildStringer(self):
-    x = 0
-    y = 0
+    ms = MakeSlotShapedSolid()
+    ms.ax2 = gp_Ax2(gp_Pnt(0,0,0),gp_Dir(0,0,1),gp_Dir(1,0,0))
+    ms.thickness = self.thickness
+    ms.width = self.width
+    ms.length = self.l_max
+    solid = ms.Solid()
+    trsf = gp_Trsf()
+    trsf.SetTranslation(gp_Vec(0,0,-self.thickness/2.0))
+    mt = BRepBuilderAPI_Transform(solid,trsf)
+    self.shape = mt.Shape()
+
+  def positionedShape(self):
+    pnt_0,v_dir_0 = self.ball_0.D1()
+    pnt_1,v_dir_1 = self.ball_1.D1()
+    v_ball_0 = gp_Vec(pnt_0.XYZ())
+    v_ball_1 = gp_Vec(pnt_1.XYZ())
+    v_mid = (v_ball_0 + v_ball_1).Multiplied(0.5)
+    v_ball_to_ball = gp_Vec(pnt_1.XYZ()) - gp_Vec(pnt_0.XYZ())
+
+    v_0 = (v_ball_to_ball.Crossed(v_dir_0)).Normalized()
+    v_1 = (v_ball_to_ball.Crossed(v_dir_1)).Normalized()
+    v_y = (v_0 + v_1).Multiplied(0.5).Normalized()
+    v_z = (v_ball_to_ball.Crossed(v_y)).Normalized()
+
+    ax_final = gp_Ax3(gp_Pnt(v_mid.XYZ()),gp_Dir(v_z.XYZ()),gp_Dir(v_ball_to_ball.XYZ()))
+
+    trsf = gp_Trsf()
+    trsf.SetTransformation(ax_final,gp_Ax3())
+
+    mt = BRepBuilderAPI_Transform(self.shape,trsf)
+    return mt.Shape()
 
 def loadBRep(filename):
   builder = BRep_Builder()
@@ -369,10 +468,13 @@ def loadBRep(filename):
 
 
 profile = loadBRep("inputGeom/5_segment_wire.brep")
-#profile = loadBRep("inputGeom/circ.brep")
 
 for i in Topo(profile).wires():
   wire = i
+
+profile = loadBRep("inputGeom/circ.brep")
+for i in Topo(profile).wires():
+  wire_1 = i
 
 body         = makeEllipticalAnnularSolid(70,55,40,25,0,30)
 cavityCutter = makeEllipticalAnnularSolid(65,50,45,30,5,31)
@@ -403,15 +505,46 @@ for i in range(32):
   ball = Ball(5)
   ballCurve.insertBall(i+1,ball,0.5)
 
+ballCurve1 = BallCurve(wire_1)
+n_balls = 20
+for i in range(n_balls):
+  ball = Ball(5)
+  ballCurve1.insertBall(i+1,ball,i*1/n_balls)
+
 ballCurve.ballParams[0] = 0.25 * 5.0 
-ballCurve.ballParams[15] = 0.5 * 5.0
+ballCurve.ballParams[15] = 0.7 * 5.0
 ballCurve.spaceBalls(0,15)
 
 ballCurve.ballParams[16] = 0.75 * 5.0
 ballCurve.ballParams[31] = 0.99 * 5.0
 ballCurve.spaceBalls(16,31)
 
+forceTransferCylinders = []
+for i in range(len(ballCurve.balls)-1):
+  ftc = ForceTransferCylinder(9,0,ballCurve.balls[i],ballCurve.balls[i+1])
+  forceTransferCylinders.append(ftc)
+  output.append(ftc.Shape())
+
+forceTransferCylinders1 = []
+for i in range(len(ballCurve1.balls)-1):
+  ftc = ForceTransferCylinder(9,0,ballCurve1.balls[i],ballCurve1.balls[i+1])
+  forceTransferCylinders.append(ftc)
+  output.append(ftc.Shape())
+  
 for ball in ballCurve.balls:
   output.append(ball.Shape())
+
+for ball in ballCurve1.balls:
+  output.append(ball.Shape())
+
+for i in range(10):
+  stringer = Stringer()
+  stringer.width = 12
+  stringer.thickness = 3.0
+  stringer.ball_0 = ballCurve.balls[i+7]
+  stringer.ball_1 = ballCurve1.balls[i+0]
+  stringer.getLengthFromBalls(forceUpdate=True)
+  stringer.buildStringer()
+  output.append(stringer.positionedShape())
 
 writeBRep("./out.brep",output)
